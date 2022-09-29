@@ -148,7 +148,6 @@ notebooks/
 # output folder
 tmp/
 data/
-changyeon/
 deprecated_logs/
 video/
 final/
