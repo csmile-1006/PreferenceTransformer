@@ -1,6 +1,8 @@
 # Preference Transformer: Modeling Human Preferences using Transformers for RL
 Implementation of the PT in JAX and FLAX. Our code is based on the implementation of [Flaxmodels](https://github.com/matthias-wright/flaxmodels) and [IQL](https://github.com/ikostrikov/implicit_q_learning). 
 
+## NOTICE
+In this version, we substitute the human label to the dummy label (all labels are masked with constant 1), so you can just check how our implementation works. We will publicly release the collected real human preferences.
 ## How to run the code
 
 ### Install dependencies
