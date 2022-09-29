@@ -1,0 +1,527 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <!-- <title>Flask Template Example</title> -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link href="/static/css/bootstrap.min.css" rel="stylesheet" media="screen">
+    <link href="/static/css/dropdowns-enhancement.css" rel="stylesheet" media="screen">
+    <script type="text/javascript" src="/static/js/plotly-latest.min.js"></script>
+    <style type="text/css">
+        .container {
+            padding-top: 20px;
+        }
+    </style>
+
+</head>
+<body>
+<div class="container">
+    <form class="control-panel form-horizontal" onsubmit="return false;">
+        <div class="form-group">
+            <label class="control-label">Filters:</label>
+            <div class="filter current">
+                <select class="target">
+                    {% for key in distinct_param_keys %}
+                        <option>{{ key }}</option>
+                    {% endfor %}
+                </select>
+                <select class="filter">
+                </select>
+                <br/>
+            </div>
+        </div>
+        <div class="form-group">
+            <label class="control-label">Exclude:</label>
+            <div class="exclusion current">
+                <select class="exclusion-target">
+                    {% for key in distinct_param_keys %}
+                        <option>{{ key }}</option>
+                    {% endfor %}
+                </select>
+                <select class="exclusion">
+                </select>
+                <br/>
+            </div>
+        </div>
+        <div class="form-group">
+            <label for="custom_filter" class="control-label pull-left">Custom Filter:</label>
+            <div class="col-xs-8">
+                <input type="text" class="form-control" id="custom_filter" name="custom_filter"
+                       placeholder="Write filter like `lambda exp: exp.params['foo'] > 2`. See Experiment class for type of argument exp."
+                       autocomplete="on"/>
+            </div>
+        </div>
+        <div class="form-group">
+            <label for="legend_post_processor" class="control-label pull-left">Post Processor for Legends:</label>
+            <div class="col-xs-8">
+                <input type="text" class="form-control" id="legend_post_processor" name="legend_post_processor"
+                       placeholder="Write an anonymous function with return type str, and the only argument is 'legend'"
+                       autocomplete="on"/>
+            </div>
+        </div>
+        <div class="form-group">
+            <label for="custom_series_splitter" class="control-label pull-left">Custom Series Split By: </label>
+            <div class="col-xs-8">
+                <input type="text" class="form-control" id="custom_series_splitter" name="custom_series_splitter"
+                       placeholder="Write an anonymous function returning the key used for splitting, and the only argument is 'exp'"
+                       autocomplete="on"/>
+            </div>
+        </div>
+        <div class="form-group ">
+            <label for="clip_plot_value" class="control-label pull-left">Clip absolute value:</label>
+            <div class="col-xs-2">
+                <input type="text" class="form-control" id="clip_plot_value" name="clip_plot_value"
+                       placeholder="(Do not clip)"/>
+            </div>
+            <label for="plot_width" class="control-label pull-left">Plot width: </label>
+            <div class="col-xs-2">
+                <input type="text" id="plot_width" class="form-control" name="plot_width" placeholder="(Default)"/>
+            </div>
+            <label for="plot_height" class="control-label pull-left">Plot height: </label>
+            <div class="col-xs-2">
+                <input type="text" id="plot_height" class="form-control" name="plot_height" placeholder="(Default)"/>
+            </div>
+        </div>
+        <div class="form-group">
+            <label class="control-label pull-left">Y-Axis Attributes: </label>
+            <div class="btn-group pull-left" style="margin-left: 10px">
+                <button data-toggle="dropdown" class="btn btn-default dropdown-toggle">{{ plot_keys }}<span
+                        class="caret"></span></button>
+                <ul class="dropdown-menu">
+                    {% for plottable_key in plottable_keys %}
+                        <li>
+                            <input type="checkbox" id="plot_key_{{ loop.index0 }}" name="plot_key"
+                                   value="{{ loop.index0 }}"
+                                    {% if plottable_key in plot_keys %}
+                                   checked
+                                    {% endif %}
+                            />
+                            <label for="plot_key_{{ loop.index0 }}">{{ plottable_key }}</label>
+                        </li>
+                    {% endfor %}
+                </ul>
+            </div>
+            <div class="checkbox pull-left" style="margin-left: 20px">
+                <label><input type="checkbox" name="use_median" value="">Use Median</label><br>
+            </div>
+            <div class="checkbox pull-left" style="margin-left: 10px">
+                <label><input type="checkbox" name="only_show_best" value="">Only show best</label><br>
+            </div>
+            <div class="checkbox pull-left" style="margin-left: 10px">
+                <label><input type="checkbox" name="best_based_on_final" value="">Best based on final</label><br>
+            </div>
+            <div class="checkbox pull-left" style="margin-left: 10px">
+                <label><input type="checkbox" name="only_show_best_sofar" value="">Only show best so far</label><br>
+            </div>
+            <div class="checkbox pull-left" style="margin-left: 10px">
+                <label><input type="checkbox" name="best_is_lowest" value="">Best is lowest</label><br>
+            </div>
+            <div class="checkbox pull-left" style="margin-left: 10px">
+                <label><input type="checkbox" name="filter_nan" value="">Filter NaN</label><br>
+            </div>
+            <div class="checkbox pull-left" style="margin-left: 10px">
+                <label><input type="checkbox" name="smooth_curve" value="">Smooth Curve</label><br>
+            </div>
+            <div class="checkbox pull-left" style="margin-left: 10px">
+                <label><input type="checkbox" name="normalize_error" value="">Normalize Error Bar</label><br>
+            </div>
+
+        </div>
+        <div class="form-group">
+            <label class="control-label pull-left">X-Axis Attributes: </label>
+            <div class="btn-group pull-left" style="margin-left: 10px">
+                <button data-toggle="dropdown" class="btn btn-default dropdown-toggle">{{ x_keys }}<span
+                        class="caret"></span></button>
+                <ul class="dropdown-menu">
+                    <li>
+                        <input
+                                type="radio"
+                                id="x_key_0"
+                                name="x_key"
+                                value=""
+                        />
+                        <label for="x_key_0">(None)</label>
+                    </li>
+                    {% for plottable_key in plottable_keys %}
+                        <li>
+                            <input type="radio" id="x_key_{{ loop.index0 }}" name="x_key"
+                                   value="{{ loop.index0 }}"
+                                    {% if plottable_key in x_keys %}
+                                   checked
+                                    {% endif %}
+                            />
+                            <label for="x_key_{{ loop.index0 }}">{{ plottable_key }}</label>
+                        </li>
+                    {% endfor %}
+                </ul>
+            </div>
+        </div>
+        <div class="form-group">
+            <div class="checkbox pull-left" style="margin-left: 10px">
+                <label><input type="checkbox" name="make_bar_chart" value="">
+                    Make Bar Chart
+                </label><br>
+            </div>
+        </div>
+        <div class="form-group">
+            <label class="control-label pull-left">(Figure) Split by:</label>
+            {%  for split_idx in range(5) %}
+                <div class="btn-group pull-left" style="margin-left: 10px">
+                    <div class="split-key-selector">
+                        <button data-toggle="dropdown" class="btn btn-default dropdown-toggle">(None)<span class="caret"></span></button>
+                        <ul class="dropdown-menu">
+                            <li>
+                                <input
+                                        type="radio"
+                                        id="{{ split_idx }}_split_key_0"
+                                        name="{{ split_idx }}_split_key"
+                                        value="0"
+                                />
+                                <label for="{{ split_idx }}_split_key_0">(None)</label>
+                            </li>
+                            {% for key in distinct_param_keys %}
+                                <li>
+                                    <input
+                                           type="radio"
+                                           id="{{ split_idx }}_split_key_{{ loop.index }}"
+                                           name="{{ split_idx }}_split_key"
+                                           value="{{ loop.index }}"
+                                           {% if key == "{}_{}".format(split_idx, split_key) %}
+                                               checked
+                                           {% endif %}
+                                    />
+                                    <label for="{{ split_idx }}_split_key_{{ loop.index }}">{{ key }}</label>
+                                </li>
+                            {% endfor %}
+                        </ul>
+                    </div>
+                </div>
+            {% endfor %}
+        </div>
+        <div class="form-group ">
+            <label class="control-label pull-left"
+                   style="margin-left: 10px">(Series) Split by:</label>
+            {%  for group_idx in range(5) %}
+                <div class="btn-group pull-left" style="margin-left: 10px">
+                    <div class="group-key-selector">
+                        <button data-toggle="dropdown"
+                                class="btn btn-default dropdown-toggle">(None)<span class="caret"></span>
+                        </button>
+                        <ul class="dropdown-menu">
+                            <li>
+                                <input
+                                    type="radio"
+                                    id="{{ group_idx }}_group_key_0"
+                                    name="{{ group_idx }}_group_key"
+                                    value="0"
+                                />
+                                <label for="{{ group_idx }}_group_key_0">(None)</label>
+                            </li>
+                            {% for key in distinct_param_keys %}
+                                <li>
+                                    <input
+                                            type="radio"
+                                            id="{{ group_idx }}_group_key_{{ loop.index }}"
+                                            name="{{ group_idx }}_group_key"
+                                            value="{{ loop.index }}"
+                                            {% if key == "{}_{}".format(group_idx, group_key) %}
+                                               checked
+                                            {% endif %}
+                                    />
+                                    <label for="{{ group_idx }}_group_key_{{loop.index }}">{{ key }}</label>
+                                </li>
+                            {% endfor %}
+                        </ul>
+                    </div>
+                </div>
+            {% endfor %}
+        </div>
+        <div class="form-group">
+            <label class="control-label pull-left" style="margin-left: 10px">
+                Filter best:
+            </label>
+            <div class="btn-group pull-left" style="margin-left: 10px">
+                <button data-toggle="dropdown"
+                        class="btn btn-default dropdown-toggle">(None: Do not fitler to best)<span
+                        class="caret"></span></button>
+                <ul class="dropdown-menu">
+                    <li>
+                        <input type="radio" id="best_filter_key_0" name="best_filter_key"
+                               value="0"/>
+                        <label for="best_filter_key_0">
+                            (None: Do not filter to best)
+                        </label>
+                    </li>
+                    {% for key in distinct_param_keys %}
+                        <li>
+                            <input
+                                    type="radio"
+                                    id="best_filter_key_{{ loop.index }}"
+                                    name="best_filter_key"
+                                    value="{{ loop.index }}"
+                                    {% if key == best_filter_key %}
+                                    checked
+                                    {% endif %}
+                            />
+                            <label for="best_filter_key_{{ loop.index }}">{{ key
+                                    }}</label>
+                        </li>
+                    {% endfor %}
+                </ul>
+            </div>
+        </div>
+        <div class="form-group ">
+            <button class="btn btn-primary update">Update</button>
+            <button class="btn btn-primary reload">Reload</button>
+            <button class="btn btn-info eps">Plot EPS</button>
+            <span id="status"></span>
+        </div>
+    </form>
+    <div id="plot_wrapper">
+        {{ plot_div|safe }}
+    </div>
+</div>
+<script type="text/javascript" src="/static/js/jquery-1.10.2.min.js"></script>
+<script type="text/javascript" src="/static/js/bootstrap.min.js"></script>
+<script type="text/javascript" src="/static/js/dropdowns-enhancement.js"></script>
+<script type="text/javascript" src="/static/js/jquery.loadTemplate-1.5.6.js"></script>
+
+<script type="text/javascript">
+    var plottableKeys = {{ plottable_keys|tojson|safe }};
+    var distinctParamKeys = {{ distinct_param_keys|tojson|safe }};
+    var distinctParams = {{ distinct_params|tojson|safe }};
+
+    function _updatePlotInternal(callback, options) {
+        $("#status").html("Updating");
+
+        var $controlPanel = $(".control-panel");
+        var plotKeys = []
+        $controlPanel.find("input[name=plot_key]:checked").each(function() {
+            plotKeys.push(plottableKeys[$(this).val()]);
+        });
+        var xKeys = []
+        $controlPanel.find("input[name=x_key]:checked").each(function() {
+            xKeys.push(plottableKeys[$(this).val()]);
+        });
+        var splitKeys = [];
+        $.each($("div.split-key-selector"), function (itr, div) {
+            var val = $(div).find("input:checked").val();
+            if (val && val !== "0") {
+                splitKeys.push(distinctParamKeys[val - 1]);
+            }
+        });
+        var groupKeys = [];
+        $.each($("div.group-key-selector"), function (itr, div) {
+            var val = $(div).find("input:checked").val();
+            if (val && val !== "0") {
+                groupKeys.push(distinctParamKeys[val - 1]);
+            }
+        });
+        var bestFilterIndex = $controlPanel.find(
+            "input[type=radio][name=best_filter_key]:checked"
+        ).val();
+        var bestFilterKey;
+        if (bestFilterIndex === 0) {
+            bestFilterKey = null;
+        } else {
+            bestFilterKey = distinctParamKeys[bestFilterIndex - 1];
+        }
+        var filters = {};
+        $.each($("div.filter"), function (itr, div) {
+            var val = $(div).find(".filter").val();
+            if (val && val.length != 0) {
+                filters[$(div).find(".target").val()] = val;
+            }
+        });
+        var exclusions = [];
+        $.each($("div.exclusion"), function (itr, div) {
+            var val = $(div).find(".exclusion").val();
+            if (val && val.length != 0) {
+                {#exclusions[$(div).find(".exclusion-target").val()] = val;#}
+                exclusions.push([$(div).find(".exclusion-target").val(), val]);
+            }
+        });
+        var useMedian = $controlPanel.find("input[type=checkbox][name=use_median]").is(':checked');
+        var onlyShowBest = $controlPanel.find("input[type=checkbox][name=only_show_best]").is(':checked');
+        var bestBasedOnFinal = $controlPanel.find("input[type=checkbox][name=best_based_on_final]").is(':checked');
+        var onlyShowBestSofar = $controlPanel.find("input[type=checkbox][name=only_show_best_sofar]").is(':checked');
+        var bestIsLowest = $controlPanel.find("input[type=checkbox][name=best_is_lowest]").is(':checked');
+        var filterNaN = $controlPanel.find("input[type=checkbox][name=filter_nan]").is(':checked');
+        var smoothCurve = $controlPanel.find("input[type=checkbox][name=smooth_curve]").is(':checked');
+        var normalizeError = $controlPanel.find("input[type=checkbox][name=normalize_error]").is(':checked');
+        var makeBarChart = $controlPanel.find("input[type=checkbox][name=make_bar_chart]").is(':checked');
+        if (useMedian === true) {
+            useMedian = "True";
+        }
+        if (onlyShowBest === true) {
+            onlyShowBest = "True";
+        }
+        if (bestBasedOnFinal === true) {
+            bestBasedOnFinal = "True";
+        }
+        if (onlyShowBestSofar === true) {
+            onlyShowBestSofar = "True";
+        }
+        if (bestIsLowest === true) {
+            bestIsLowest = "True";
+        }
+        if (filterNaN === true) {
+            filterNaN = "True";
+        }
+        if (smoothCurve === true) {
+            smoothCurve = "True";
+        }
+        if (normalizeError === true) {
+            normalizeError = "True";
+        }
+        if (makeBarChart === true) {
+            makeBarChart = "True";
+        }
+        var clipPlotValue = $controlPanel.find("input[name=clip_plot_value]").val();
+        var plotWidth = $controlPanel.find("input[name=plot_width]").val();
+        var plotHeight = $controlPanel.find("input[name=plot_height]").val();
+        var customFilter = $controlPanel.find("input[name=custom_filter]").val();
+        var legendPostProcessor = $controlPanel.find("input[name=legend_post_processor]").val();
+        var customSeriesSplitter = $controlPanel.find("input[name=custom_series_splitter]").val();
+        console.log("updating");
+        $.get("/plot_div",
+                $.extend({
+                    "plot_keys": JSON.stringify(plotKeys),
+                    "x_keys": JSON.stringify(xKeys),
+                    "split_keys": JSON.stringify(splitKeys),
+                    "group_keys": JSON.stringify(groupKeys),
+                    "best_filter_key": bestFilterKey,
+                    "filters": JSON.stringify(filters),
+                    "exclusions": JSON.stringify(exclusions),
+                    "use_median": useMedian,
+                    "only_show_best": onlyShowBest,
+                    "clip_plot_value": clipPlotValue,
+                    "best_is_lowest": bestIsLowest,
+                    "plot_width": plotWidth,
+                    "plot_height": plotHeight,
+                    "filter_nan": filterNaN,
+                    "smooth_curve": smoothCurve,
+                    "custom_filter": customFilter,
+                    "legend_post_processor": legendPostProcessor,
+                    "best_based_on_final": bestBasedOnFinal,
+                    "normalize_error": normalizeError,
+                    "make_bar_chart": makeBarChart,
+                    "custom_series_splitter": customSeriesSplitter,
+                    "only_show_best_sofar": onlyShowBestSofar,
+                }, options),
+                function (data) {
+                    $("#plot_wrapper").empty().append(data);
+                    $("#status").html("Updated");
+                    if (callback !== undefined) {
+                        callback();
+                    }
+                });
+    }
+    function _reload(callback, options) {
+        $.post("/reload-data",
+                function (data) {
+                    $("#status").html("Reloaded");
+                    if (callback !== undefined) {
+                        callback();
+                    }
+                });
+    }
+    function updatePlot(callback) {
+        _updatePlotInternal(callback, {});
+    }
+    function reload(callback) {
+        _reload(callback, {});
+    }
+    function genEPS(callback) {
+        _updatePlotInternal(callback, {"eps": "True"});
+    }
+    $(function () {
+        $("input[type=radio][name=plot_key]").change(function () {
+            updatePlot();
+        });
+        $("input[type=radio][name=x_key]").change(function () {
+            updatePlot();
+        });
+        $("input[type=radio][name=split_key]").change(function () {
+            updatePlot();
+        });
+        $("input[type=radio][name=group_key]").change(function () {
+            updatePlot();
+        });
+        $("button.update").click(function () {
+            updatePlot();
+        });
+        $("button.reload").click(function () {
+            reload();
+        });
+        $("button.eps").click(function () {
+            genEPS();
+        });
+    });
+    function updateFilterSelections() {
+        var key = $(this).val();
+        var select$ = $(this).parent().find("select.filter");
+        select$.empty();
+        $.each([""].concat(distinctParams[key]), function (itr, v) {
+            var text;
+            if (v === "") {
+                text = "(All)";
+            } else {
+                text = v;
+            }
+            select$.append(
+                    $("<option />")
+                            .attr("value", v)
+                            .text(text)
+            );
+        });
+    }
+    $("select.target").change(updateFilterSelections);
+    var cleanFilter;
+    function addFilter() {
+        var parent$ = $(this).parent();
+        if (parent$.hasClass("current")) {
+            parent$.after(cleanFilter.clone(true, true));
+            parent$.removeClass("current");
+        }
+    }
+    $("select.filter").change(addFilter);
+    {# Copy/pasted filter code #}
+    function updateExclusionSelections() {
+        var key = $(this).val();
+        var select$ = $(this).parent().find("select.exclusion");
+        select$.empty();
+        $.each([""].concat(distinctParams[key]), function (itr, v) {
+            var text;
+            if (v === "") {
+                text = "(None)";
+            } else {
+                text = v;
+            }
+            select$.append(
+                $("<option />")
+                    .attr("value", v)
+                    .text(text)
+            );
+        });
+    }
+    $("select.exclusion-target").change(updateExclusionSelections);
+    var cleanExclusion;
+    function addExclusion() {
+        var parent$ = $(this).parent();
+        if (parent$.hasClass("current")) {
+            parent$.after(cleanExclusion.clone(true, true));
+            parent$.removeClass("current");
+        }
+    }
+    $("select.exclusion").change(addExclusion);
+    $(document).ready(function () {
+        updateFilterSelections.call($("select.target"));
+        updateExclusionSelections.call($("select.exclusion-target"));
+        cleanFilter = $(".filter.current").clone(true, true);
+        cleanExclusion = $(".exclusion.current").clone(true, true);
+        $("#status").html("Ready")
+    });
+</script>
+
+</body>
+</html>
