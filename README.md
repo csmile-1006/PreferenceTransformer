@@ -1,8 +1,23 @@
-# Preference Transformer: Modeling Human Preferences using Transformers for RL
-Implementation of the PT in JAX and FLAX. Our code is based on the implementation of [Flaxmodels](https://github.com/matthias-wright/flaxmodels) and [IQL](https://github.com/ikostrikov/implicit_q_learning). 
+# Preference Transformer: Modeling Human Preferences using Transformers for RL (ICLR 2023)
+
+Official Jax/Flax implementation of **[Preference Transformer: Modeling Human Preferences using Transformers for RL](https://openreview.net/forum?id=Peot1SFDX0)** by [Changyeon Kim*](https://changyeon.page)<sup>,1</sup>, [Jongjin Park*](https://pjj4288.github.io/)<sup>,1</sup>, [Jinwoo Shin](https://alinlab.kaist.ac.kr/shin.html)<sup>1</sup>, [Honglak Lee](https://web.eecs.umich.edu/~honglak/)<sup>2,3</sup>, [Pieter Abbeel](http://people.eecs.berkeley.edu/~pabbeel/)<sup>4</sup>, [Kimin Lee](https://sites.google.com/view/kiminlee)<sup>5</sup>
+
+<sup>1</sup>KAIST, <sup>2</sup>University of Michigan <sup>3</sup>LG AI Research <sup>4</sup>UC Berkeley <sup>5</sup>Google Research
+
+**TL;DR**: We introduce a transformer-based architecture for preference-based RL considering non-Markovian rewards.
+
+[paper](https://openreview.net/pdf?id=Peot1SFDX0)
+
+<p align="center">
+    <img src=figures/arch.png width="900"> 
+</p>
+Overview of Preference Transformer. We first construct hidden embeddings $\{\mathbf{x}_t\}$ through the causal transformer, where each represents the context information from the initial timestep to timestep $t$. The preference attention layer with a bidirectional self-attention computes the non-Markovian rewards $\{\hat{r}_t\} and their convex combinations $\{z_t \}$ from those hidden embeddings, then we aggregate $\{z_t \}$ for modeling the weighted sum of non-Markovian rewards $\sum_{t}{w_t \hat{r}_t }$.
+
 
 ## NOTICE
+
 In this version, we replace the human label with the dummy label (all labels are masked with constant 1), so you can only check how our implementation works. We will publicly release the collected real human preferences.
+
 ## How to run the code
 
 ### Install dependencies
@@ -49,3 +64,20 @@ CUDA_VISIBLE_DEVICES=0 python train_offline.py --seq_len {sequence length in rew
 # Markovian Reward (MR)
 CUDA_VISIBLE_DEVICES=0 python train_offline.py --comment {experiment_name} --eval_interval {5000: mujoco / 100000: antmaze / 50000: adroit} --env_name {d4rl env name} --config {configs/(mujoco|antmaze|adroit)_config.py} --eval_episodes {100 for ant , 10 o.w.} --use_reward_model True --model_type MR --ckpt_dir {reward_model_path} --seed {seed}
 ```
+
+## Citation
+
+```
+@inproceedings{
+kim2023preference,
+title={Preference Transformer: Modeling Human Preferences using Transformers for {RL}},
+author={Changyeon Kim and Jongjin Park and Jinwoo Shin and Honglak Lee and Pieter Abbeel and Kimin Lee},
+booktitle={International Conference on Learning Representations},
+year={2023},
+url={https://openreview.net/forum?id=Peot1SFDX0}
+}
+```
+
+## Acknowledgments
+
+Our code is based on the implementation of [Flaxmodels](https://github.com/matthias-wright/flaxmodels) and [IQL](https://github.com/ikostrikov/implicit_q_learning). 
