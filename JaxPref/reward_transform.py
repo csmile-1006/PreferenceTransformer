@@ -248,7 +248,11 @@ def load_queries_with_indices(env, dataset, num_query, len_query, label_type, sa
     total_act_seq_1, total_act_seq_2 = np.zeros((num_query, len_query, action_dim)), np.zeros((num_query, len_query, action_dim))
     total_timestep_1, total_timestep_2 = np.zeros((num_query, len_query), dtype=np.int32), np.zeros((num_query, len_query), dtype=np.int32)
 
-    query_range = np.arange(len(saved_labels) - num_query, len(saved_labels))
+    if saved_labels is None:
+        query_range = np.arange(num_query)
+    else:
+        query_range = np.arange(len(saved_labels) - num_query, len(saved_labels))
+
     for query_count, i in enumerate(tqdm(query_range, desc="get queries from saved indices")):
         temp_count = 0
         while(temp_count < 2):                

@@ -9,12 +9,13 @@ from absl import app, flags
 from tqdm import tqdm, trange
 
 import d4rl
-from JaxPref.reward_transform import get_queries_from_multi
+from JaxPref.reward_transform import load_queries_with_indices
 
 FLAGS = flags.FLAGS
 
 flags.DEFINE_string("env_name", "antmaze-medium-diverse-v2", "Environment name.")
 flags.DEFINE_string("save_dir", "./video/", "saving dir.")
+flags.DEFINE_string("query_path", "./human_label/", "query path")
 flags.DEFINE_integer("num_query", 1000, "number of query.")
 flags.DEFINE_integer("query_len", 100, "length of each query.")
 flags.DEFINE_integer("label_type", 1, "label type.")
@@ -253,13 +254,23 @@ def main(_):
         width, height = video_size["large"]
     set_seed(gym_env, FLAGS.seed)
     ds = qlearning_mujoco_dataset(gym_env)
-    batch = get_queries_from_multi(
+
+    base_path = os.path.join(FLAGS.query_path, FLAGS.env_name)
+    human_indices_2_file, human_indices_1_file, _ = sorted(os.listdir(base_path))
+    with open(os.path.join(base_path, human_indices_1_file), "rb") as fp:   # Unpickling
+        human_indices = pickle.load(fp)
+    with open(os.path.join(base_path, human_indices_2_file), "rb") as fp:   # Unpickling
+        human_indices_2 = pickle.load(fp)
+    human_labels = None
+    batch = load_queries_with_indices(
         gym_env,
         ds,
-        data_dir="./",
+        saved_indices=[human_indices, human_indices_2],
+        saved_labels=human_labels,
         num_query=FLAGS.num_query,
         len_query=FLAGS.query_len,
         label_type=FLAGS.label_type,
+        scripted_teacher=True
     )
     visualize_query(
         gym_env, ds, batch, FLAGS.query_len, FLAGS.num_query, width=width, height=height, save_dir=FLAGS.save_dir
