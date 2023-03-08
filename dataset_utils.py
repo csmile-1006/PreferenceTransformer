@@ -313,7 +313,6 @@ def reward_from_preference_transformer(
             actions=_input_act,
             timestep=_input_timestep,
             attn_mask=_input_attn_mask,
-            next_observations=None
         )
 
         jax_input = batch_to_jax(input)
@@ -331,7 +330,6 @@ def reward_from_preference_transformer(
                 actions=_input_act[:, :seq_len - 1, :],
                 timestep=_input_timestep[:, :seq_len - 1],
                 attn_mask=_input_attn_mask[:, :seq_len - 1],
-                next_observations=None
             )
             jax_prev_input = batch_to_jax(prev_input)
             prev_reward, _ = reward_model.get_reward(jax_prev_input)

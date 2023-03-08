@@ -15,6 +15,10 @@ from flax.training.early_stopping import EarlyStopping
 from flaxmodels.flaxmodels.lstm.lstm import LSTMRewardModel
 from flaxmodels.flaxmodels.gpt2.trajectory_gpt2 import TransRewardModel
 
+import robosuite as suite
+from robosuite.wrappers import GymWrapper
+import robomimic.utils.env_utils as EnvUtils
+
 from .sampler import TrajSampler
 from .jax_utils import batch_to_jax
 import JaxPref.reward_transform as r_tf
@@ -28,7 +32,7 @@ from .utils import Timer, define_flags_with_default, set_random_seed, get_user_f
 
 # Jax memory
 # os.environ['XLA_PYTHON_CLIENT_PREALLOCATE']='false'
-# os.environ['XLA_PYTHON_CLIENT_MEM_FRACTION'] = '.40'
+os.environ['XLA_PYTHON_CLIENT_MEM_FRACTION'] = '.50'
 
 FLAGS_DEF = define_flags_with_default(
     env='halfcheetah-medium-v2',
@@ -38,7 +42,7 @@ FLAGS_DEF = define_flags_with_default(
     data_seed=42,
     save_model=True,
     batch_size=64,
-    early_stop=True,
+    early_stop=False,
     min_delta=1e-3,
     patience=10,
 
@@ -55,14 +59,24 @@ FLAGS_DEF = define_flags_with_default(
     n_epochs=2000,
     eval_period=5,
 
-    data_dir='./data',
+    data_dir='./human_label',
     num_query=1000,
     query_len=25,
     skip_flag=0,
     balance=False,
+    topk=10,
+    window=2,
     use_human_label=False,
+    feedback_random=False,
+    feedback_uniform=False,
+    enable_bootstrap=False,
 
     comment='',
+
+    robosuite=False,
+    robosuite_dataset_type="ph",
+    robosuite_dataset_path='./data',
+    robosuite_max_episode_steps=500,
 
     reward=MR.get_default_config(),
     transformer=PrefTransformer.get_default_config(),
@@ -98,7 +112,21 @@ def main(_):
 
     set_random_seed(FLAGS.seed)
 
-    if 'ant' in FLAGS.env:
+    if FLAGS.robosuite:
+        dataset = r_tf.qlearning_robosuite_dataset(os.path.join(FLAGS.robosuite_dataset_path, FLAGS.env.lower(), FLAGS.robosuite_dataset_type, "low_dim.hdf5"))
+        env = EnvUtils.create_env_from_metadata(
+            env_meta=dataset['env_meta'],
+            render=False,
+            render_offscreen=False
+        ).env
+        gym_env = GymWrapper(env)
+        gym_env._max_episode_steps = gym_env.horizon
+        gym_env.seed(FLAGS.seed)
+        gym_env.action_space.seed(FLAGS.seed)
+        gym_env.observation_space.seed(FLAGS.seed)
+        gym_env.ignore_done = False
+        label_type = 1
+    elif 'ant' in FLAGS.env:
         gym_env = gym.make(FLAGS.env)
         gym_env = wrappers.EpisodeMonitor(gym_env)
         gym_env = wrappers.SinglePrecision(gym_env)
@@ -120,58 +148,53 @@ def main(_):
     print("load saved indices.")
     if 'dense' in FLAGS.env:
         env = "-".join(FLAGS.env.split("-")[:-2] + [FLAGS.env.split("-")[-1]])
+    elif FLAGS.robosuite:
+        env = f"{FLAGS.env}_{FLAGS.robosuite_dataset_type}"
     else:
         env = FLAGS.env
 
-    base_path = os.path.join("./human_label", env)
-    human_indices_2_file, human_indices_1_file, human_labels_file = sorted(os.listdir(base_path))
+    base_path = os.path.join(FLAGS.data_dir, env)
+    if os.path.exists(base_path):
+        human_indices_2_file, human_indices_1_file, human_labels_file = sorted(os.listdir(base_path))
+        with open(os.path.join(base_path, human_indices_1_file), "rb") as fp:   # Unpickling
+            human_indices = pickle.load(fp)
+        with open(os.path.join(base_path, human_indices_2_file), "rb") as fp:   # Unpickling
+            human_indices_2 = pickle.load(fp)
+        with open(os.path.join(base_path, human_labels_file), "rb") as fp:   # Unpickling
+            human_labels = pickle.load(fp)
 
-    with open(os.path.join(base_path, human_indices_1_file), "rb") as fp:   # Unpickling
-        human_indices = pickle.load(fp)
-    with open(os.path.join(base_path, human_indices_2_file), "rb") as fp:   # Unpickling
-        human_indices_2 = pickle.load(fp)
-    with open(os.path.join(base_path, human_labels_file), "rb") as fp:   # Unpickling
-        human_labels = pickle.load(fp)
+        pref_dataset = r_tf.load_queries_with_indices(
+            gym_env, dataset, FLAGS.num_query, FLAGS.query_len,
+            label_type=label_type, saved_indices=[human_indices, human_indices_2], saved_labels=human_labels,
+            balance=FLAGS.balance, scripted_teacher=not FLAGS.use_human_label)
 
-    pref_dataset = r_tf.load_queries_with_indices(
-        gym_env, dataset, FLAGS.num_query, FLAGS.query_len,
-        label_type=label_type, saved_indices=[human_indices, human_indices_2], saved_labels=human_labels,
-        balance=FLAGS.balance, scripted_teacher=not FLAGS.use_human_label)
+        true_eval = True if len(human_labels) > FLAGS.num_query else False
+        pref_eval_dataset = r_tf.load_queries_with_indices(
+            gym_env, dataset, int(FLAGS.num_query * 0.1), FLAGS.query_len,
+            label_type=label_type, saved_indices=[human_indices, human_indices_2], saved_labels=human_labels,
+            balance=FLAGS.balance, scripted_teacher=not FLAGS.use_human_label)
+    else:
+        pref_dataset = r_tf.get_queries_from_multi(
+            gym_env, dataset, FLAGS.num_query, FLAGS.query_len,
+            data_dir=base_path, label_type=label_type, balance=FLAGS.balance)
 
-    pref_eval_dataset = r_tf.load_queries_with_indices(
-        gym_env, dataset, int(FLAGS.num_query * 0.1), FLAGS.query_len,
-        label_type=label_type, saved_indices=[human_indices, human_indices_2], saved_labels=human_labels,
-        balance=FLAGS.balance, scripted_teacher=not FLAGS.use_human_label)
+        human_indices_2_file, human_indices_1_file, script_labels_file = sorted(os.listdir(base_path))
+        with open(os.path.join(base_path, human_indices_1_file), "rb") as fp:   # Unpickling
+            human_indices = pickle.load(fp)
+        with open(os.path.join(base_path, human_indices_2_file), "rb") as fp:   # Unpickling
+            human_indices_2 = pickle.load(fp)
+        with open(os.path.join(base_path, script_labels_file), "rb") as fp:   # Unpickling
+            human_labels = pickle.load(fp)
+        true_eval = True if len(human_labels) > FLAGS.num_query else False
+        pref_eval_dataset = r_tf.load_queries_with_indices(
+            gym_env, dataset, int(FLAGS.num_query * 0.1), FLAGS.query_len,
+            label_type=label_type, saved_indices=[human_indices, human_indices_2], saved_labels=human_labels,
+            balance=FLAGS.balance, topk=FLAGS.topk, scripted_teacher=True, window=FLAGS.window, 
+            feedback_random=FLAGS.feedback_random, pref_attn_n_head=FLAGS.transformer.pref_attn_n_head, true_eval=true_eval)
 
     set_random_seed(FLAGS.seed)
     observation_dim = gym_env.observation_space.shape[0]
     action_dim = gym_env.action_space.shape[0]
-
-    if FLAGS.model_type == "MR":
-        rf = FullyConnectedQFunction(observation_dim, action_dim, FLAGS.reward_arch, FLAGS.orthogonal_init, FLAGS.activations, FLAGS.activation_final)
-        reward_model = MR(FLAGS.reward, rf)
-
-    elif FLAGS.model_type == "PrefTransformer":
-        total_steps = FLAGS.n_epochs
-        config = transformers.GPT2Config(
-            **FLAGS.transformer
-        )
-        config.warmup_steps = int(total_steps * 0.05)
-        config.total_steps = total_steps
-
-        trans = TransRewardModel(config=config, observation_dim=observation_dim, action_dim=action_dim, activation=FLAGS.activations, activation_final=FLAGS.activation_final, )
-        reward_model = PrefTransformer(config, trans)
-
-    elif FLAGS.model_type == "NMR":
-        total_steps = FLAGS.n_epochs
-        config = transformers.GPT2Config(
-            **FLAGS.lstm
-        )
-        config.warmup_steps = int(total_steps * 0.1)
-        config.total_steps = total_steps
-
-        lstm = LSTMRewardModel(config=config, observation_dim=observation_dim, action_dim=action_dim, activation=FLAGS.activations, activation_final=FLAGS.activation_final)
-        reward_model = NMR(config, lstm)
 
     data_size = pref_dataset["observations"].shape[0]
     interval = int(data_size / FLAGS.batch_size) + 1
@@ -180,6 +203,33 @@ def main(_):
     eval_interval = int(eval_data_size / FLAGS.batch_size) + 1
 
     early_stop = EarlyStopping(min_delta=FLAGS.min_delta, patience=FLAGS.patience)
+
+    if FLAGS.model_type == "MR":
+        rf = FullyConnectedQFunction(observation_dim, action_dim, FLAGS.reward_arch, FLAGS.orthogonal_init, FLAGS.activations, FLAGS.activation_final)
+        reward_model = MR(FLAGS.reward, rf)
+
+    elif FLAGS.model_type == "PrefTransformer":
+        total_epochs = FLAGS.n_epochs
+        config = transformers.GPT2Config(
+            **FLAGS.transformer
+        )
+        config.warmup_steps = int(total_epochs * 0.1 * interval)
+        config.total_steps = total_epochs * interval
+
+        trans = TransRewardModel(config=config, observation_dim=observation_dim, action_dim=action_dim, activation=FLAGS.activations, activation_final=FLAGS.activation_final)
+        reward_model = PrefTransformer(config, trans)
+
+    elif FLAGS.model_type == "NMR":
+        total_epochs = FLAGS.n_epochs
+        config = transformers.GPT2Config(
+            **FLAGS.lstm
+        )
+        config.warmup_steps = int(total_epochs * 0.1 * interval)
+        config.total_steps = total_epochs * interval
+
+        lstm = LSTMRewardModel(config=config, observation_dim=observation_dim, action_dim=action_dim, activation=FLAGS.activations, activation_final=FLAGS.activation_final)
+        reward_model = NMR(config, lstm)
+
     if FLAGS.model_type == "MR":
         train_loss = "reward/rf_loss"
     elif FLAGS.model_type == "NMR":
@@ -187,6 +237,7 @@ def main(_):
     elif FLAGS.model_type == "PrefTransformer":
         train_loss = "reward/trans_loss"
 
+    criteria_key = None
     for epoch in range(FLAGS.n_epochs + 1):
         metrics = defaultdict(list)
         metrics['epoch'] = epoch
@@ -210,30 +261,33 @@ def main(_):
         if epoch % FLAGS.eval_period == 0:
             for j in range(eval_interval):
                 eval_start_pt, eval_end_pt = j * FLAGS.batch_size, min((j + 1) * FLAGS.batch_size, pref_eval_dataset["observations"].shape[0])
+                # batch_eval = batch_to_jax(index_batch(pref_eval_dataset, range(eval_start_pt, eval_end_pt)))
                 batch_eval = batch_to_jax(index_batch(pref_eval_dataset, range(eval_start_pt, eval_end_pt)))
                 for key, val in prefix_metrics(reward_model.evaluation(batch_eval), 'reward').items():
                     metrics[key].append(val)
-            if "antmaze" in FLAGS.env and not "dense" in FLAGS.env:
-                # choose train loss as criteria.
-                criteria = np.mean(metrics[train_loss])
-            else:
-                # choose eval loss as criteria.
-                criteria = np.mean(metrics[key])
+            if not criteria_key:
+                if "antmaze" in FLAGS.env and not "dense" in FLAGS.env and not true_eval:
+                    # choose train loss as criteria.
+                    criteria_key = train_loss
+                else:
+                    # choose eval loss as criteria.
+                    criteria_key = key
+            criteria = np.mean(metrics[criteria_key])
             has_improved, early_stop = early_stop.update(criteria)
-            if FLAGS.early_stop:
-                if early_stop.should_stop:
-                    for key, val in metrics.items():
-                        if isinstance(val, list):
-                            metrics[key] = np.mean(val)
-                    logger.record_dict(metrics)
-                    logger.dump_tabular(with_prefix=False, with_timestamp=False)
-                    wb_logger.log(metrics)
-                    print('Met early stopping criteria, breaking...')
-                    break
-                elif epoch > 0 and has_improved:
-                    metrics["best_epoch"] = epoch
-                    save_data = {"reward_model": reward_model, "variant": variant, "epoch": epoch}
-                    save_pickle(save_data, "best_model.pkl", save_dir)
+            if early_stop.should_stop and FLAGS.early_stop:
+                for key, val in metrics.items():
+                    if isinstance(val, list):
+                        metrics[key] = np.mean(val)
+                logger.record_dict(metrics)
+                logger.dump_tabular(with_prefix=False, with_timestamp=False)
+                wb_logger.log(metrics)
+                print('Met early stopping criteria, breaking...')
+                break
+            elif epoch > 0 and has_improved:
+                metrics["best_epoch"] = epoch
+                metrics[f"{key}_best"] = criteria
+                save_data = {"reward_model": reward_model, "variant": variant, "epoch": epoch}
+                save_pickle(save_data, "best_model.pkl", save_dir)
 
         for key, val in metrics.items():
             if isinstance(val, list):

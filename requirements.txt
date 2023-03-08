@@ -13,3 +13,5 @@ tensorflow-probability >= 0.14.1
 imageio >= 2.9.0
 imageio-ffmpeg >= 0.4.3
 pandas
+git+https://github.com/ARISE-Initiative/robosuite.git@v1.3
+git+https://github.com/ARISE-Initiative/robomimic.git

@@ -1,10 +1,10 @@
 import os
+import h5py
 import pickle
 from tqdm import tqdm
 import numpy as np
-import jax
+import ujson as json
 import jax.numpy as jnp
-import optax
 
 
 def get_goal(name):
@@ -19,7 +19,10 @@ def get_goal(name):
 
 def new_get_trj_idx(env, terminate_on_end=False, **kwargs):
 
-    dataset = env.get_dataset(**kwargs)
+    if not hasattr(env, 'get_dataset'):
+        dataset = kwargs['dataset']
+    else:
+        dataset = env.get_dataset()
     N = dataset['rewards'].shape[0]
     
     # The newer version of the dataset adds an explicit
@@ -32,7 +35,7 @@ def new_get_trj_idx(env, terminate_on_end=False, **kwargs):
     start_idx, data_idx = 0, 0
     trj_idx_list = []
     for i in range(N-1):
-        if 'maze' in env.spec.id:
+        if env.spec and 'maze' in env.spec.id:
             done_bool = sum(dataset['infos/goal'][i+1] - dataset['infos/goal'][i]) > 0
         else:
             done_bool = bool(dataset['terminals'][i])
@@ -59,10 +62,10 @@ def new_get_trj_idx(env, terminate_on_end=False, **kwargs):
     return trj_idx_list
 
 
-def get_queries_from_multi(env, dataset, num_query, len_query, data_dir=None, balance=False, label_type=0, skip_flag=0, seed=0, topk=5, window=2, prefix="train", mask_random=False, mask_uniform=False):
+def get_queries_from_multi(env, dataset, num_query, len_query, data_dir=None, balance=False, label_type=0, skip_flag=0):
     
     os.makedirs(data_dir, exist_ok=True)
-    trj_idx_list = new_get_trj_idx(env) # get_nonmdp_trj_idx(env)
+    trj_idx_list = new_get_trj_idx(env, dataset=dataset) # get_nonmdp_trj_idx(env)
     labeler_info = np.zeros(len(trj_idx_list) - 1)
     
     # to-do: parallel implementation
@@ -85,11 +88,9 @@ def get_queries_from_multi(env, dataset, num_query, len_query, data_dir=None, ba
     start_indices_1, start_indices_2 = np.zeros(num_query), np.zeros(num_query)
     time_indices_1, time_indices_2 = np.zeros(num_query), np.zeros(num_query)
 
-    base_path = os.path.join(data_dir, "scripted_teacher", env.spec.id)
-    indices_1_filename = os.path.join(base_path, f"{prefix}_indices_numq{num_query}_len{len_query}_s{seed}.pkl")
-    indices_2_filename = os.path.join(base_path, f"{prefix}_indices_2_numq{num_query}_len{len_query}_s{seed}.pkl")
-    time_1_filename = os.path.join(base_path, f"{prefix}_time_numq{num_query}_len{len_query}_s{seed}.pkl")
-    time_2_filename = os.path.join(base_path, f"{prefix}_time_2_numq{num_query}_len{len_query}_s{seed}.pkl")
+    indices_1_filename = os.path.join(data_dir, f"indices_num{num_query}_q{len_query}")
+    indices_2_filename = os.path.join(data_dir, f"indices_2_num{num_query}_q{len_query}")
+    label_dummy_filename = os.path.join(data_dir, f"label_dummy")
     
     if not os.path.exists(indices_1_filename) or not os.path.exists(indices_2_filename):
         for query_count in tqdm(range(num_query), desc="get queries"):
@@ -189,8 +190,6 @@ def get_queries_from_multi(env, dataset, num_query, len_query, data_dir=None, ba
         batch['observations_2'] = seg_obs_2
         batch['next_observations_2'] = seg_next_obs_2
         batch['actions_2'] = seq_act_2
-        batch['feedback_1'] = seq_feedback_1
-        batch['feedback_2'] = seq_feedback_2
         batch['timestep_1'] = seq_timestep_1
         batch['timestep_2'] = seq_timestep_2
         batch['start_indices'] = start_indices_1
@@ -206,23 +205,18 @@ def get_queries_from_multi(env, dataset, num_query, len_query, data_dir=None, ba
                 batch[key] = val[np.concatenate([selected_zero_idx, nonzero_idx])]
             print(f"size of batch after balancing: {len(batch['labels'])}")
 
-        os.makedirs(os.path.join(data_dir, "scripted_teacher", env.spec.id), exist_ok=True)
-        with open(indices_1_filename, "wb") as fp, open(indices_2_filename, "wb") as gp:
+        with open(indices_1_filename, "wb") as fp, open(indices_2_filename, "wb") as gp, open(label_dummy_filename, "wb") as hp:
             pickle.dump(batch['start_indices'], fp)
             pickle.dump(batch['start_indices_2'], gp)
-        with open(time_1_filename, "wb") as fp, open(time_2_filename, "wb") as gp:
-            pickle.dump(time_indices_1, fp)
-            pickle.dump(time_indices_2, gp)
+            pickle.dump(np.ones_like(batch['labels']), hp)
     else:
         with open(indices_1_filename, "rb") as fp, open(indices_2_filename, "rb") as gp:
             indices_1, indices_2 = pickle.load(fp), pickle.load(gp)
-        with open(time_1_filename, "rb") as fp, open(time_2_filename, "rb") as gp:
-            time_indices_1, time_indices_2 = pickle.load(fp), pickle.load(gp)
 
         return load_queries_with_indices(
             env, dataset, num_query, len_query, 
-            label_type=label_type, saved_indices=[indices_1, indices_2], time_indices=[time_indices_1, time_indices_2], 
-            saved_labels=None, balance=balance, topk=topk, scripted_teacher=True, window=window
+            label_type=label_type, saved_indices=[indices_1, indices_2], 
+            saved_labels=None, balance=balance, scripted_teacher=True
         )
 
     return batch
@@ -236,26 +230,26 @@ def find_time_idx(trj_idx_list, idx):
 
 def load_queries_with_indices(env, dataset, num_query, len_query, label_type, saved_indices, saved_labels, balance=False, scripted_teacher=False):
     
-    trj_idx_list = new_get_trj_idx(env) # get_nonmdp_trj_idx(env)
+    trj_idx_list = new_get_trj_idx(env, dataset=dataset) # get_nonmdp_trj_idx(env)
     
     # to-do: parallel implementation
     trj_idx_list = np.array(trj_idx_list)
-    trj_len_list = trj_idx_list[:,1] - trj_idx_list[:,0] + 1
+    trj_len_list = trj_idx_list[:, 1] - trj_idx_list[:, 0] + 1
     
     assert max(trj_len_list) > len_query
     
     total_reward_seq_1, total_reward_seq_2 = np.zeros((num_query, len_query)), np.zeros((num_query, len_query))
 
     observation_dim = dataset["observations"].shape[-1]
+    action_dim = dataset["actions"].shape[-1]
+
     total_obs_seq_1, total_obs_seq_2 = np.zeros((num_query, len_query, observation_dim)), np.zeros((num_query, len_query, observation_dim))
     total_next_obs_seq_1, total_next_obs_seq_2 = np.zeros((num_query, len_query, observation_dim)), np.zeros((num_query, len_query, observation_dim))
-
-    action_dim = dataset["actions"].shape[-1]
     total_act_seq_1, total_act_seq_2 = np.zeros((num_query, len_query, action_dim)), np.zeros((num_query, len_query, action_dim))
-
     total_timestep_1, total_timestep_2 = np.zeros((num_query, len_query), dtype=np.int32), np.zeros((num_query, len_query), dtype=np.int32)
 
-    for i, query_count in enumerate(tqdm(range(num_query), desc="get queries from saved indices")):
+    query_range = np.arange(len(saved_labels) - num_query, len(saved_labels))
+    for query_count, i in enumerate(tqdm(query_range, desc="get queries from saved indices")):
         temp_count = 0
         while(temp_count < 2):                
             start_idx = saved_indices[temp_count][i]
@@ -321,7 +315,7 @@ def load_queries_with_indices(env, dataset, num_query, len_query, label_type, sa
         human_labels[np.array(saved_labels)==0,0] = 1.
         human_labels[np.array(saved_labels)==1,1] = 1.
         human_labels[np.array(saved_labels)==-1] = 0.5
-        human_labels = human_labels[:len(binary_label)]
+        human_labels = human_labels[query_range]
         batch['labels'] = human_labels
     batch['script_labels'] = rational_labels
 
@@ -433,4 +427,77 @@ def qlearning_ant_dataset(env, dataset=None, terminate_on_end=False, **kwargs):
         'goals': np.array(goal_),
         'xys': np.array(xy_),
         'dones_bef': np.array(done_bef_)
+    }
+
+
+def qlearning_robosuite_dataset(dataset_path, terminate_on_end=False, **kwargs):
+    """
+    Returns datasets formatted for use by standard Q-learning algorithms,
+    with observations, actions, next_observations, rewards, and a terminal
+    flag.
+    Args:
+        env: An OfflineEnv object.
+        dataset: An optional dataset to pass in for processing. If None,
+            the dataset will default to env.get_dataset()
+        terminate_on_end (bool): Set done=True on the last timestep
+            in a trajectory. Default is False, and will discard the
+            last timestep in each trajectory.
+        **kwargs: Arguments to pass to env.get_dataset().
+    Returns:
+        A dictionary containing keys:
+            observations: An N x dim_obs array of observations.
+            actions: An N x dim_action array of actions.
+            next_observations: An N x dim_obs array of next observations.
+            rewards: An N-dim float array of rewards.
+            terminals: An N-dim boolean array of "done" or episode termination flags.
+    """
+    f = h5py.File(dataset_path, 'r')
+
+    # N = dataset['rewards'].shape[0]
+    demos = list(f['data'].keys())
+    N = len(demos)
+    obs_ = []
+    next_obs_ = []
+    action_ = []
+    reward_ = []
+    done_ = []
+    traj_idx_ = []
+    seg_idx_ = []
+
+    # The newer version of the dataset adds an explicit
+    # timeouts field. Keep old method for backwards compatability.
+    use_timeouts = False
+    # if 'timeouts' in dataset:
+    #     use_timeouts = True
+
+    episode_step = 0
+    obs_keys = kwargs.get("obs_key", ["object", "robot0_joint_pos", "robot0_joint_pos_cos", "robot0_joint_pos_sin", "robot0_joint_vel", "robot0_eef_pos", "robot0_eef_quat", "robot0_gripper_qpos", "robot0_gripper_qvel"])
+    for ep in tqdm(demos, desc="load robosuite demonstrations"):
+        ep_grp = f[f"data/{ep}"]
+        traj_len = ep_grp["actions"].shape[0]
+        for i in range(traj_len - 1):
+            total_obs = ep_grp["obs"]
+            obs = np.concatenate([total_obs[key][i].tolist() for key in obs_keys], axis=0)
+            new_obs = np.concatenate([total_obs[key][i + 1].tolist() for key in obs_keys], axis=0)
+            action = ep_grp["actions"][i]
+            reward = ep_grp["rewards"][i]
+            done_bool = bool(ep_grp["dones"][i])
+
+            obs_.append(obs)
+            next_obs_.append(new_obs)
+            action_.append(action)
+            reward_.append(reward)
+            done_.append(done_bool)
+            traj_idx_.append(int(ep[5:]))
+            seg_idx_.append(i)
+
+    return {
+        'observations': np.array(obs_),
+        'actions': np.array(action_),
+        'next_observations': np.array(next_obs_),
+        'rewards': np.array(reward_),
+        'terminals': np.array(done_),
+        'env_meta': json.loads(f["data"].attrs["env_args"]),
+        'traj_indices': np.array(traj_idx_),
+        'seg_indices': np.array(seg_idx_),
     }
