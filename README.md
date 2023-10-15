@@ -36,7 +36,7 @@ cd ..
 
 # Installs the wheel compatible with Cuda 11 and cudnn 8.
 pip install "jax[cuda11_cudnn805]>=0.2.27" -f https://storage.googleapis.com/jax-releases/jax_cuda_releases.html
-pip install protobuf==3.20.1 gym==0.18.0 distrax==0.1.2 wandb==0.12.20
+pip install protobuf==3.20.1 gym<0.24.0 distrax==0.1.2 wandb
 pip install transformers
 ```
 
